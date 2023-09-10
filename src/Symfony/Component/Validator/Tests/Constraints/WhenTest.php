@@ -22,6 +22,7 @@ use Symfony\Component\Validator\Exception\ConstraintDefinitionException;
 use Symfony\Component\Validator\Exception\MissingOptionsException;
 use Symfony\Component\Validator\Mapping\ClassMetadata;
 use Symfony\Component\Validator\Mapping\Loader\AnnotationLoader;
+use Symfony\Component\Validator\Mapping\Loader\AttributeLoader;
 use Symfony\Component\Validator\Tests\Constraints\Fixtures\WhenTestWithAttributes;
 
 final class WhenTest extends TestCase
@@ -50,8 +51,6 @@ final class WhenTest extends TestCase
      */
     public function testAnnotations()
     {
-        $this->expectDeprecation('Since symfony/validator 6.4: Passing a "Doctrine\Common\Annotations\AnnotationReader" instance as argument 1 to "Symfony\Component\Validator\Mapping\Loader\AnnotationLoader::__construct()" is deprecated, pass null or omit the parameter instead.');
-
         $loader = new AnnotationLoader(new AnnotationReader());
         $metadata = new ClassMetadata(WhenTestWithAnnotations::class);
 
@@ -130,7 +129,7 @@ final class WhenTest extends TestCase
 
     public function testAttributes()
     {
-        $loader = new AnnotationLoader();
+        $loader = new AttributeLoader();
         $metadata = new ClassMetadata(WhenTestWithAttributes::class);
 
         self::assertTrue($loader->loadClassMetadata($metadata));

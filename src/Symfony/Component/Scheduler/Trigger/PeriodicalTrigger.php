@@ -13,10 +13,7 @@ namespace Symfony\Component\Scheduler\Trigger;
 
 use Symfony\Component\Scheduler\Exception\InvalidArgumentException;
 
-/**
- * @experimental
- */
-class PeriodicalTrigger implements TriggerInterface, \Stringable
+class PeriodicalTrigger implements TriggerInterface
 {
     private float $intervalInSeconds = 0.0;
     private \DateTimeImmutable $from;

@@ -122,9 +122,7 @@ class DumpDataCollector extends DataCollector implements DataDumperInterface
                 $dumper->setDisplayOptions(['fileLinkFormat' => $this->fileLinkFormat]);
             } else {
                 $dumper = new CliDumper('php://output', $this->charset);
-                if (method_exists($dumper, 'setDisplayOptions')) {
-                    $dumper->setDisplayOptions(['fileLinkFormat' => $this->fileLinkFormat]);
-                }
+                $dumper->setDisplayOptions(['fileLinkFormat' => $this->fileLinkFormat]);
             }
 
             foreach ($this->data as $dump) {
@@ -136,7 +134,7 @@ class DumpDataCollector extends DataCollector implements DataDumperInterface
     public function reset(): void
     {
         $this->stopwatch?->reset();
-        $this->data = [];
+        parent::reset();
         $this->dataCount = 0;
         $this->isCollected = true;
         $this->clonesCount = 0;
@@ -238,9 +236,7 @@ class DumpDataCollector extends DataCollector implements DataDumperInterface
                 $dumper->setDisplayOptions(['fileLinkFormat' => $this->fileLinkFormat]);
             } else {
                 $dumper = new CliDumper('php://output', $this->charset);
-                if (method_exists($dumper, 'setDisplayOptions')) {
-                    $dumper->setDisplayOptions(['fileLinkFormat' => $this->fileLinkFormat]);
-                }
+                $dumper->setDisplayOptions(['fileLinkFormat' => $this->fileLinkFormat]);
             }
 
             foreach ($this->data as $i => $dump) {

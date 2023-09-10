@@ -12,9 +12,12 @@
 namespace Symfony\Component\HttpKernel\Tests\DependencyInjection;
 
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\DependencyInjection\Argument\LazyClosure;
 use Symfony\Component\DependencyInjection\Argument\RewindableGenerator;
 use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
+use Symfony\Component\DependencyInjection\Attribute\AutowireCallable;
+use Symfony\Component\DependencyInjection\Attribute\AutowireLocator;
 use Symfony\Component\DependencyInjection\Attribute\TaggedIterator;
 use Symfony\Component\DependencyInjection\Attribute\TaggedLocator;
 use Symfony\Component\DependencyInjection\Attribute\Target;
@@ -278,7 +281,6 @@ class RegisterControllerArgumentLocatorsPassTest extends TestCase
         $container->register('argument_resolver.service')->addArgument([]);
 
         $container->register('foo', ArgumentWithoutTypeController::class)
-            ->setPublic(false)
             ->addTag('controller.service_arguments');
 
         $pass = new RegisterControllerArgumentLocatorsPass();
@@ -479,7 +481,7 @@ class RegisterControllerArgumentLocatorsPassTest extends TestCase
 
         $locator = $container->get($locatorId)->get('foo::fooAction');
 
-        $this->assertCount(8, $locator->getProvidedServices());
+        $this->assertCount(9, $locator->getProvidedServices());
         $this->assertInstanceOf(\stdClass::class, $locator->get('service1'));
         $this->assertSame('foo/bar', $locator->get('value'));
         $this->assertSame('foo', $locator->get('expression'));
@@ -488,6 +490,9 @@ class RegisterControllerArgumentLocatorsPassTest extends TestCase
         $this->assertSame('bar', $locator->get('rawValue'));
         $this->assertSame('@bar', $locator->get('escapedRawValue'));
         $this->assertSame('foo', $locator->get('customAutowire'));
+        $this->assertInstanceOf(FooInterface::class, $autowireCallable = $locator->get('autowireCallable'));
+        $this->assertInstanceOf(LazyClosure::class, $autowireCallable);
+        $this->assertInstanceOf(\stdClass::class, $autowireCallable->service);
         $this->assertFalse($locator->has('service2'));
     }
 
@@ -512,7 +517,7 @@ class RegisterControllerArgumentLocatorsPassTest extends TestCase
         /** @var ServiceLocator $locator */
         $locator = $container->get($locatorId)->get('foo::fooAction');
 
-        $this->assertCount(2, $locator->getProvidedServices());
+        $this->assertCount(3, $locator->getProvidedServices());
 
         $this->assertTrue($locator->has('iterator'));
         $this->assertInstanceOf(RewindableGenerator::class, $argIterator = $locator->get('iterator'));
@@ -525,6 +530,12 @@ class RegisterControllerArgumentLocatorsPassTest extends TestCase
         $this->assertTrue($argLocator->has('baz'));
 
         $this->assertSame(iterator_to_array($argIterator), [$argLocator->get('bar'), $argLocator->get('baz')]);
+
+        $this->assertTrue($locator->has('container'));
+        $this->assertInstanceOf(ServiceLocator::class, $argLocator = $locator->get('container'));
+        $this->assertCount(2, $argLocator);
+        $this->assertTrue($argLocator->has('bar'));
+        $this->assertTrue($argLocator->has('baz'));
     }
 }
 
@@ -628,6 +639,11 @@ class CustomAutowire extends Autowire
     }
 }
 
+interface FooInterface
+{
+    public function foo();
+}
+
 class WithAutowireAttribute
 {
     public function fooAction(
@@ -647,6 +663,8 @@ class WithAutowireAttribute
         string $escapedRawValue,
         #[CustomAutowire('some.parameter')]
         string $customAutowire,
+        #[AutowireCallable(service: 'some.id', method: 'bar')]
+        FooInterface $autowireCallable,
         #[Autowire(service: 'invalid.id')]
         \stdClass $service2 = null,
     ) {
@@ -658,6 +676,7 @@ class WithTaggedIteratorAndTaggedLocator
     public function fooAction(
         #[TaggedIterator('foobar')] iterable $iterator,
         #[TaggedLocator('foobar')] ServiceLocator $locator,
+        #[AutowireLocator('bar', 'baz')] ContainerInterface $container,
     ) {
     }
 }

@@ -1521,6 +1521,10 @@ class ProcessTest extends TestCase
         $process->setTimeout(2);
         $process->wait();
         $this->assertFalse($process->isRunning());
+
+        if ('\\' !== \DIRECTORY_SEPARATOR && !\Closure::bind(fn () => $this->isSigchildEnabled(), $process, $process)()) {
+            $this->assertSame(0, $process->getExitCode());
+        }
     }
 
     public function testEnvCaseInsensitiveOnWindows()

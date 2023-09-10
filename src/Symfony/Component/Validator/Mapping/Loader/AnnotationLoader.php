@@ -22,6 +22,8 @@ use Symfony\Component\Validator\Mapping\ClassMetadata;
 /**
  * Loads validation metadata using a Doctrine annotation {@link Reader} or using PHP 8 attributes.
  *
+ * @deprecated since Symfony 6.4, use {@see AttributeLoader} instead
+ *
  * @author Bernhard Schussek <bschussek@gmail.com>
  * @author Alexander M. Turek <me@derrabus.de>
  */
@@ -36,10 +38,6 @@ class AnnotationLoader implements LoaderInterface
 
     public function __construct(Reader $reader = null)
     {
-        if ($reader) {
-            trigger_deprecation('symfony/validator', '6.4', 'Passing a "%s" instance as argument 1 to "%s()" is deprecated, pass null or omit the parameter instead.', get_debug_type($reader), __METHOD__);
-        }
-
         $this->reader = $reader;
     }
 

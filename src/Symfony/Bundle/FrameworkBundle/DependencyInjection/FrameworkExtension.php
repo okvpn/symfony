@@ -53,6 +53,7 @@ use Symfony\Component\Config\Resource\FileResource;
 use Symfony\Component\Config\ResourceCheckerInterface;
 use Symfony\Component\Console\Application;
 use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Messenger\RunCommandMessageHandler;
 use Symfony\Component\DependencyInjection\Alias;
 use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\ChildDefinition;
@@ -83,6 +84,7 @@ use Symfony\Component\Form\FormTypeInterface;
 use Symfony\Component\HtmlSanitizer\HtmlSanitizer;
 use Symfony\Component\HtmlSanitizer\HtmlSanitizerConfig;
 use Symfony\Component\HtmlSanitizer\HtmlSanitizerInterface;
+use Symfony\Component\HttpClient\Messenger\PingWebhookMessageHandler;
 use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Retry\GenericRetryStrategy;
 use Symfony\Component\HttpClient\RetryableHttpClient;
@@ -99,6 +101,7 @@ use Symfony\Component\HttpKernel\Controller\ArgumentValueResolverInterface;
 use Symfony\Component\HttpKernel\Controller\ValueResolverInterface;
 use Symfony\Component\HttpKernel\DataCollector\DataCollectorInterface;
 use Symfony\Component\HttpKernel\DependencyInjection\Extension;
+use Symfony\Component\HttpKernel\Log\DebugLoggerConfigurator;
 use Symfony\Component\Lock\LockFactory;
 use Symfony\Component\Lock\LockInterface;
 use Symfony\Component\Lock\PersistingStoreInterface;
@@ -260,6 +263,11 @@ class FrameworkExtension extends Extension
             if (!class_exists(DebugCommand::class)) {
                 $container->removeDefinition('console.command.dotenv_debug');
             }
+
+            if (!class_exists(RunCommandMessageHandler::class)) {
+                $container->removeDefinition('console.messenger.application');
+                $container->removeDefinition('console.messenger.execute_command_handler');
+            }
         }
 
         // Load Cache configuration first as it is used by other components
@@ -273,6 +281,7 @@ class FrameworkExtension extends Extension
         $this->readConfigEnabled('translator', $container, $config['translator']);
         $this->readConfigEnabled('property_access', $container, $config['property_access']);
         $this->readConfigEnabled('profiler', $container, $config['profiler']);
+        $this->readConfigEnabled('workflows', $container, $config['workflows']);
 
         // A translator must always be registered (as support is included by
         // default in the Form and Validator component). If disabled, an identity
@@ -869,6 +878,10 @@ class FrameworkExtension extends Extension
             $loader->load('mailer_debug.php');
         }
 
+        if ($this->isInitializedConfigEnabled('workflows')) {
+            $loader->load('workflow_debug.php');
+        }
+
         if ($this->isInitializedConfigEnabled('http_client')) {
             $loader->load('http_client_debug.php');
         }
@@ -944,7 +957,6 @@ class FrameworkExtension extends Extension
             foreach ($workflow['transitions'] as $transition) {
                 if ('workflow' === $type) {
                     $transitionDefinition = new Definition(Workflow\Transition::class, [$transition['name'], $transition['from'], $transition['to']]);
-                    $transitionDefinition->setPublic(false);
                     $transitionId = sprintf('.%s.transition.%s', $workflowId, $transitionCounter++);
                     $container->setDefinition($transitionId, $transitionDefinition);
                     $transitions[] = new Reference($transitionId);
@@ -952,7 +964,6 @@ class FrameworkExtension extends Extension
                         $configuration = new Definition(Workflow\EventListener\GuardExpression::class);
                         $configuration->addArgument(new Reference($transitionId));
                         $configuration->addArgument($transition['guard']);
-                        $configuration->setPublic(false);
                         $eventName = sprintf('workflow.%s.guard.%s', $name, $transition['name']);
                         $guardsConfiguration[$eventName][] = $configuration;
                     }
@@ -966,7 +977,6 @@ class FrameworkExtension extends Extension
                     foreach ($transition['from'] as $from) {
                         foreach ($transition['to'] as $to) {
                             $transitionDefinition = new Definition(Workflow\Transition::class, [$transition['name'], $from, $to]);
-                            $transitionDefinition->setPublic(false);
                             $transitionId = sprintf('.%s.transition.%s', $workflowId, $transitionCounter++);
                             $container->setDefinition($transitionId, $transitionDefinition);
                             $transitions[] = new Reference($transitionId);
@@ -974,7 +984,6 @@ class FrameworkExtension extends Extension
                                 $configuration = new Definition(Workflow\EventListener\GuardExpression::class);
                                 $configuration->addArgument(new Reference($transitionId));
                                 $configuration->addArgument($transition['guard']);
-                                $configuration->setPublic(false);
                                 $eventName = sprintf('workflow.%s.guard.%s', $name, $transition['name']);
                                 $guardsConfiguration[$eventName][] = $configuration;
                             }
@@ -997,7 +1006,6 @@ class FrameworkExtension extends Extension
 
             // Create a Definition
             $definitionDefinition = new Definition(Workflow\Definition::class);
-            $definitionDefinition->setPublic(false);
             $definitionDefinition->addArgument($places);
             $definitionDefinition->addArgument($transitions);
             $definitionDefinition->addArgument($initialMarking);
@@ -1050,7 +1058,6 @@ class FrameworkExtension extends Extension
             if ($workflow['supports']) {
                 foreach ($workflow['supports'] as $supportedClassName) {
                     $strategyDefinition = new Definition(Workflow\SupportStrategy\InstanceOfSupportStrategy::class, [$supportedClassName]);
-                    $strategyDefinition->setPublic(false);
                     $registryDefinition->addMethodCall('addWorkflow', [new Reference($workflowId), $strategyDefinition]);
                 }
             } elseif (isset($workflow['support_strategy'])) {
@@ -1097,6 +1104,29 @@ class FrameworkExtension extends Extension
                 $container->setParameter('workflow.has_guard_listeners', true);
             }
         }
+
+        $listenerAttributes = [
+            Workflow\Attribute\AsAnnounceListener::class,
+            Workflow\Attribute\AsCompletedListener::class,
+            Workflow\Attribute\AsEnterListener::class,
+            Workflow\Attribute\AsEnteredListener::class,
+            Workflow\Attribute\AsGuardListener::class,
+            Workflow\Attribute\AsLeaveListener::class,
+            Workflow\Attribute\AsTransitionListener::class,
+        ];
+
+        foreach ($listenerAttributes as $attribute) {
+            $container->registerAttributeForAutoconfiguration($attribute, static function (ChildDefinition $definition, AsEventListener $attribute, \ReflectionClass|\ReflectionMethod $reflector) {
+                $tagAttributes = get_object_vars($attribute);
+                if ($reflector instanceof \ReflectionMethod) {
+                    if (isset($tagAttributes['method'])) {
+                        throw new LogicException(sprintf('"%s" attribute cannot declare a method on "%s::%s()".', $attribute::class, $reflector->class, $reflector->name));
+                    }
+                    $tagAttributes['method'] = $reflector->getName();
+                }
+                $definition->addTag('kernel.event_listener', $tagAttributes);
+            });
+        }
     }
 
     private function registerDebugConfiguration(array $config, ContainerBuilder $container, PhpFileLoader $loader): void
@@ -1134,9 +1164,12 @@ class FrameworkExtension extends Extension
 
         if ($debug && class_exists(DebugProcessor::class)) {
             $definition = new Definition(DebugProcessor::class);
-            $definition->setPublic(false);
             $definition->addArgument(new Reference('request_stack'));
+            $definition->addTag('kernel.reset', ['method' => 'reset']);
             $container->setDefinition('debug.log_processor', $definition);
+
+            $container->register('debug.debug_logger_configurator', DebugLoggerConfigurator::class)
+                ->setArguments([new Reference('debug.log_processor')]);
         }
     }
 
@@ -1363,7 +1396,6 @@ class FrameworkExtension extends Extension
 
         $package = new ChildDefinition($baseUrls ? 'assets.url_package' : 'assets.path_package');
         $package
-            ->setPublic(false)
             ->replaceArgument(0, $baseUrls ?: $basePath)
             ->replaceArgument(1, $version)
         ;
@@ -1520,7 +1552,7 @@ class FrameworkExtension extends Extension
                     'resource_files' => $files,
                     'scanned_directories' => $scannedDirectories = array_merge($dirs, $nonExistingDirs),
                     'cache_vary' => [
-                        'scanned_directories' => array_map(static fn (string $dir): string => str_starts_with($dir, $projectDir.'/') ? substr($dir, 1 + \strlen($projectDir)) : $dir, $scannedDirectories),
+                        'scanned_directories' => array_map(fn ($dir) => str_starts_with($dir, $projectDir.'/') ? substr($dir, 1 + \strlen($projectDir)) : $dir, $scannedDirectories),
                     ],
                 ]
             );
@@ -1545,6 +1577,7 @@ class FrameworkExtension extends Extension
             TranslationBridge\Crowdin\CrowdinProviderFactory::class => 'translation.provider_factory.crowdin',
             TranslationBridge\Loco\LocoProviderFactory::class => 'translation.provider_factory.loco',
             TranslationBridge\Lokalise\LokaliseProviderFactory::class => 'translation.provider_factory.lokalise',
+            PhraseProviderFactory::class => 'translation.provider_factory.phrase',
         ];
 
         $parentPackages = ['symfony/framework-bundle', 'symfony/translation', 'symfony/http-client'];
@@ -1624,8 +1657,8 @@ class FrameworkExtension extends Extension
         $definition = $container->findDefinition('validator.email');
         $definition->replaceArgument(0, $config['email_validation_mode']);
 
-        if (\array_key_exists('enable_annotations', $config) && $config['enable_annotations']) {
-            $validatorBuilder->addMethodCall('enableAnnotationMapping', [true]);
+        if (\array_key_exists('enable_attributes', $config) && $config['enable_attributes']) {
+            $validatorBuilder->addMethodCall('enableAttributeMapping', [true]);
             if ($this->isInitializedConfigEnabled('annotations') && method_exists(ValidatorBuilder::class, 'setDoctrineAnnotationReader')) {
                 $validatorBuilder->addMethodCall('setDoctrineAnnotationReader', [new Reference('annotation_reader')]);
             }
@@ -1886,6 +1919,10 @@ class FrameworkExtension extends Extension
             $container->removeDefinition('serializer.normalizer.mime_message');
         }
 
+        if (!class_exists(Translator::class)) {
+            $container->removeDefinition('serializer.normalizer.translatable');
+        }
+
         // compat with Symfony < 6.3
         if (!is_subclass_of(ProblemNormalizer::class, SerializerAwareInterface::class)) {
             $container->getDefinition('serializer.normalizer.problem')
@@ -1893,7 +1930,7 @@ class FrameworkExtension extends Extension
         }
 
         $serializerLoaders = [];
-        if (isset($config['enable_annotations']) && $config['enable_annotations']) {
+        if (isset($config['enable_attributes']) && $config['enable_attributes']) {
             if ($container->getParameter('kernel.debug')) {
                 $container->removeDefinition('serializer.mapping.cache_class_metadata_factory');
             }
@@ -1902,14 +1939,12 @@ class FrameworkExtension extends Extension
                 AnnotationLoader::class,
                 [new Reference('annotation_reader', ContainerInterface::NULL_ON_INVALID_REFERENCE)]
             );
-            $annotationLoader->setPublic(false);
 
             $serializerLoaders[] = $annotationLoader;
         }
 
         $fileRecorder = function ($extension, $path) use (&$serializerLoaders) {
             $definition = new Definition(\in_array($extension, ['yaml', 'yml']) ? YamlFileLoader::class : XmlFileLoader::class, [$path]);
-            $definition->setPublic(false);
             $serializerLoaders[] = $definition;
         };
 
@@ -2058,7 +2093,6 @@ class FrameworkExtension extends Extension
 
             // Generate services for semaphore instances
             $semaphoreDefinition = new Definition(Semaphore::class);
-            $semaphoreDefinition->setPublic(false);
             $semaphoreDefinition->setFactory([new Reference('semaphore.'.$resourceName.'.factory'), 'createSemaphore']);
             $semaphoreDefinition->setArguments([$resourceName]);
 
@@ -2437,7 +2471,6 @@ class FrameworkExtension extends Extension
 
         if (method_exists(PropertyAccessor::class, 'createCache')) {
             $propertyAccessDefinition = $container->register('cache.property_access', AdapterInterface::class);
-            $propertyAccessDefinition->setPublic(false);
 
             if (!$container->getParameter('kernel.debug')) {
                 $propertyAccessDefinition->setFactory([PropertyAccessor::class, 'createCache']);
@@ -2461,6 +2494,10 @@ class FrameworkExtension extends Extension
         $defaultUriTemplateVars = $options['vars'] ?? [];
         unset($options['vars']);
         $container->getDefinition('http_client.transport')->setArguments([$options, $config['max_host_connections'] ?? 6]);
+
+        if (!class_exists(PingWebhookMessageHandler::class)) {
+            $container->removeDefinition('http_client.messenger.ping_webhook_handler');
+        }
 
         if (!$hasPsr18 = ContainerBuilder::willBeAvailable('psr/http-client', ClientInterface::class, ['symfony/framework-bundle', 'symfony/http-client'])) {
             $container->removeDefinition('psr18.http_client');
@@ -2622,6 +2659,7 @@ class FrameworkExtension extends Extension
             MailerBridge\Mailchimp\Transport\MandrillTransportFactory::class => 'mailer.transport_factory.mailchimp',
             MailerBridge\OhMySmtp\Transport\OhMySmtpTransportFactory::class => 'mailer.transport_factory.ohmysmtp',
             MailerBridge\Postmark\Transport\PostmarkTransportFactory::class => 'mailer.transport_factory.postmark',
+            MailerBridge\Scaleway\Transport\ScalewayTransportFactory::class => 'mailer.transport_factory.scaleway',
             MailerBridge\Sendgrid\Transport\SendgridTransportFactory::class => 'mailer.transport_factory.sendgrid',
             MailerBridge\Sendinblue\Transport\SendinblueTransportFactory::class => 'mailer.transport_factory.sendinblue',
             MailerBridge\Amazon\Transport\SesTransportFactory::class => 'mailer.transport_factory.amazon',
@@ -2639,6 +2677,7 @@ class FrameworkExtension extends Extension
             $webhookRequestParsers = [
                 MailerBridge\Mailgun\Webhook\MailgunRequestParser::class => 'mailer.webhook.request_parser.mailgun',
                 MailerBridge\Postmark\Webhook\PostmarkRequestParser::class => 'mailer.webhook.request_parser.postmark',
+                MailerBridge\Sendgrid\Webhook\SendgridRequestParser::class => 'mailer.webhook.request_parser.sendgrid',
             ];
 
             foreach ($webhookRequestParsers as $class => $service) {
@@ -2761,6 +2800,7 @@ class FrameworkExtension extends Extension
             NotifierBridge\FreeMobile\FreeMobileTransportFactory::class => 'notifier.transport_factory.free-mobile',
             NotifierBridge\GatewayApi\GatewayApiTransportFactory::class => 'notifier.transport_factory.gateway-api',
             NotifierBridge\Gitter\GitterTransportFactory::class => 'notifier.transport_factory.gitter',
+            NotifierBridge\GoIp\GoIpTransportFactory::class => 'notifier.transport_factory.go-ip',
             NotifierBridge\GoogleChat\GoogleChatTransportFactory::class => 'notifier.transport_factory.google-chat',
             NotifierBridge\Infobip\InfobipTransportFactory::class => 'notifier.transport_factory.infobip',
             NotifierBridge\Iqsms\IqsmsTransportFactory::class => 'notifier.transport_factory.iqsms',

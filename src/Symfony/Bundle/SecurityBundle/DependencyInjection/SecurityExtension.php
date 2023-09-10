@@ -291,12 +291,11 @@ class SecurityExtension extends Extension implements PrependExtensionInterface
         $nbUserProviders = \count($userProviders);
 
         if ($nbUserProviders > 1) {
-            $container->setDefinition('security.user_providers', new Definition(ChainUserProvider::class, [$userProviderIteratorsArgument]))
-                ->setPublic(false);
+            $container->setDefinition('security.user_providers', new Definition(ChainUserProvider::class, [$userProviderIteratorsArgument]));
         } elseif (0 === $nbUserProviders) {
             $container->removeDefinition('security.listener.user_provider');
         } else {
-            $container->setAlias('security.user_providers', new Alias(current($providerIds)))->setPublic(false);
+            $container->setAlias('security.user_providers', new Alias(current($providerIds)));
         }
 
         if (1 === \count($providerIds)) {
@@ -923,7 +922,6 @@ class SecurityExtension extends Extension implements PrependExtensionInterface
 
         $container
             ->register($id, Expression::class)
-            ->setPublic(false)
             ->addArgument($expression)
         ;
 
@@ -1034,7 +1032,7 @@ class SecurityExtension extends Extension implements PrependExtensionInterface
 
     private function isValidIps(string|array $ips): bool
     {
-        $ipsList = array_reduce((array) $ips, static fn (array $ips, string $ip) => array_merge($ips, preg_split('/\s*,\s*/', $ip)), []);
+        $ipsList = array_reduce((array) $ips, fn ($ips, $ip) => array_merge($ips, preg_split('/\s*,\s*/', $ip)), []);
 
         if (!$ipsList) {
             return false;
