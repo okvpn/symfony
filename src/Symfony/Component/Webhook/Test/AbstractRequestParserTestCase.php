@@ -26,6 +26,10 @@ abstract class AbstractRequestParserTestCase extends TestCase
      */
     public function testParse(string $payload, RemoteEvent $expected)
     {
+        if ($this->mustBeSkipped()) {
+            $this->markTestSkipped('This test cannot be run.');
+        }
+
         $request = $this->createRequest($payload);
         $parser = $this->createRequestParser();
         $wh = $parser->parse($request, $this->getSecret());
@@ -65,5 +69,10 @@ abstract class AbstractRequestParserTestCase extends TestCase
     protected static function getFixtureExtension(): string
     {
         return 'json';
+    }
+
+    protected function mustBeSkipped(): bool
+    {
+        return false;
     }
 }

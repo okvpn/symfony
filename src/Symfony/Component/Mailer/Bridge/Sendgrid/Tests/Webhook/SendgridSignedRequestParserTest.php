@@ -43,4 +43,9 @@ class SendgridSignedRequestParserTest extends AbstractRequestParserTestCase
     {
         return 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE83T4O/n84iotIvIW4mdBgQ/7dAfSmpqIM8kF9mN1flpVKS3GRqe62gw+2fNNRaINXvVpiglSI8eNEc6wEA3F+g==';
     }
+
+    protected function mustBeSkipped(): bool
+    {
+        return !extension_loaded('openssl');
+    }
 }
