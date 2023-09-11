@@ -47,4 +47,9 @@ class SendgridWrongSecretRequestParserTest extends AbstractRequestParserTestCase
     {
         return 'incorrect';
     }
+
+    protected function mustBeSkipped(): bool
+    {
+        return !extension_loaded('openssl');
+    }
 }
